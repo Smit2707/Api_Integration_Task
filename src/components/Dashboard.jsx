@@ -16,11 +16,47 @@ const Dashboard = () => {
   const [photoEditForm, setPhotoEditForm] = useState(null);
   const [file, setFile] = useState(null);
   const [error, setError] = useState('');
+  const [isMultipleImageUploading, setIsMultipleImageUploading] = useState(false);
+  const [selectedImages, setSelectedImages] = useState([]);
+  const [uploadedImages, setUploadedImages] = useState([]);
+  const [imageError, setImageError] = useState('');
+  const [isCartItemEditing, setIsCartItemEditing] = useState(false);
+  const [editingItemId, setEditingItemId] = useState(null);
+  const [editingItemFile, setEditingItemFile] = useState(null);
+  const [profilePhoto, setProfilePhoto] = useState(localStorage.getItem('profilePhoto') || null);
   const navigate = useNavigate();
 
   useEffect(() => {
+    const savedPhoto = localStorage.getItem('profilePhoto');
+    if (savedPhoto) {
+      setUserData(prevData => ({
+        ...prevData,
+        photo: savedPhoto
+      }));
+    }
     fetchUserData();
   }, []);
+
+  useEffect(() => {
+    const userId = localStorage.getItem('userId');
+    const savedCart = localStorage.getItem(`cartItems_${userId}`);
+    if (savedCart && userId) {
+      try {
+        const parsedCart = JSON.parse(savedCart);
+        setUploadedImages(parsedCart);
+      } catch (error) {
+        console.error('Error loading cart:', error);
+        localStorage.removeItem(`cartItems_${userId}`);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    const userId = localStorage.getItem('userId');
+    if (userId && uploadedImages.length > 0) {
+      localStorage.setItem(`cartItems_${userId}`, JSON.stringify(uploadedImages));
+    }
+  }, [uploadedImages]);
 
   const fetchUserData = async () => {
     const userId = localStorage.getItem('userId');
@@ -39,7 +75,7 @@ const Dashboard = () => {
 
       if (response.data && response.data.data) {
         setUserData(response.data.data);
-        setEditForm(response.data.data); // Initialize edit form with current data
+        setEditForm(response.data.data);
       }
     } catch (error) {
       console.error('Error fetching user data:', error);
@@ -55,7 +91,7 @@ const Dashboard = () => {
 
   const handleCancel = () => {
     setIsEditing(false);
-    setEditForm(userData); // Reset form to current user data
+    setEditForm(userData);
   };
 
   const handleChange = (e) => {
@@ -92,7 +128,20 @@ const Dashboard = () => {
   };
 
   const handleLogout = () => {
+    const cartItems = {};
+    const keys = Object.keys(localStorage);
+    keys.forEach(key => {
+      if (key.startsWith('cartItems_')) {
+        cartItems[key] = localStorage.getItem(key);
+      }
+    });
+    
     localStorage.clear();
+    
+    Object.keys(cartItems).forEach(key => {
+      localStorage.setItem(key, cartItems[key]);
+    });
+    
     navigate('/login');
   };
 
@@ -272,14 +321,14 @@ const Dashboard = () => {
       console.log('Photo update response:', response.data);
 
       if (response.data.success) {
-        // Update local state immediately with the file URL
+        
         const fileUrl = URL.createObjectURL(file);
         setUserData(prev => ({
           ...prev,
           photo: fileUrl
         }));
 
-        // Fetch fresh user data
+        
         const userResponse = await axios.get(
           'https://interview-task-bmcl.onrender.com/api/user/userDetails',
           {
@@ -307,6 +356,135 @@ const Dashboard = () => {
       } else {
         setError('Failed to update photo. Please try again.');
       }
+    }
+  };
+
+  const handleMultipleImageUpload = () => {
+    setIsMultipleImageUploading(true);
+    setSelectedImages([]);
+    setImageError('');
+  };
+
+  const handleMultipleImagesChange = (e) => {
+    const files = Array.from(e.target.files);
+    
+    // Validate files
+    const invalidFiles = files.filter(file => !file.type.startsWith('image/'));
+    if (invalidFiles.length > 0) {
+      setImageError('Please select only image files');
+      return;
+    }
+
+    // Check file sizes
+    const largeFiles = files.filter(file => file.size > 5000000);
+    if (largeFiles.length > 0) {
+      setImageError('Each file should be less than 5MB');
+      return;
+    }
+
+    setSelectedImages(files);
+    setImageError('');
+  };
+
+  const handleUploadMultipleImages = async () => {
+    if (selectedImages.length === 0) {
+      setImageError('Please select images to upload');
+      return;
+    }
+
+    try {
+      const userId = localStorage.getItem('userId');
+      const token = localStorage.getItem('token');
+
+      if (!token) {
+        setImageError('Authentication token not found. Please login again.');
+        navigate('/login');
+        return;
+      }
+
+      // Create cart items from selected images
+      const cartItems = selectedImages.map((image, index) => {
+        // Create local URLs for preview
+        const imageUrl = URL.createObjectURL(image);
+        return {
+          productId: `IMG_${Date.now()}_${index}`,
+          name: image.name,
+          price: 100,
+          quantity: 1,
+          imageUrl: imageUrl // Store local URL for display
+        };
+      });
+
+      // Store images in state for display
+      setUploadedImages(prevImages => [
+        ...prevImages,
+        ...cartItems.map(item => ({
+          url: item.imageUrl,
+          name: item.name,
+          id: item.productId
+        }))
+      ]);
+
+      setIsMultipleImageUploading(false);
+      setSelectedImages([]);
+      setImageError('');
+      alert('Images added successfully!');
+
+    } catch (error) {
+      console.error('Upload error:', error);
+      setImageError('Failed to add images. Please try again.');
+    }
+  };
+
+  const handleCartItemEdit = (itemId) => {
+    setEditingItemId(itemId);
+    setIsCartItemEditing(true);
+  };
+
+  const handleCartItemFileChange = (e) => {
+    const file = e.target.files[0];
+    if (file && file.type.startsWith('image/')) {
+      setEditingItemFile(file);
+    } else {
+      alert('Please select an image file');
+    }
+  };
+
+  const handleCartItemUpdate = () => {
+    if (!editingItemFile) return;
+
+    setUploadedImages(prevImages => 
+      prevImages.map(item => {
+        if (item.id === editingItemId) {
+          return {
+            ...item,
+            url: URL.createObjectURL(editingItemFile),
+            name: editingItemFile.name
+          };
+        }
+        return item;
+      })
+    );
+
+    setIsCartItemEditing(false);
+    setEditingItemId(null);
+    setEditingItemFile(null);
+  };
+
+  const handleDeleteCart = () => {
+    if (window.confirm('Are you sure you want to delete all items from cart?')) {
+      const userId = localStorage.getItem('userId');
+      setUploadedImages([]);
+      localStorage.removeItem(`cartItems_${userId}`);
+    }
+  };
+
+  const handleDeleteCartItem = (itemId) => {
+    if (window.confirm('Are you sure you want to remove this item?')) {
+      const userId = localStorage.getItem('userId');
+      const updatedImages = uploadedImages.filter(item => item.id !== itemId);
+      setUploadedImages(updatedImages);
+      localStorage.setItem(`cartItems_${userId}`, JSON.stringify(updatedImages));
     }
   };
 
@@ -358,7 +536,7 @@ const Dashboard = () => {
           {userData && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {isEditing ? (
-                // Edit Form
+                
                 <>
                   <div className="space-y-4">
                     <div>
@@ -469,7 +647,7 @@ const Dashboard = () => {
                   </div>
                 </>
               ) : (
-                // Display Mode
+                
                 <>
                   <div className="space-y-4">
                     <div>
@@ -540,8 +718,8 @@ const Dashboard = () => {
           )}
         </div>
 
-        {!isEditing && !isTokenEditing && !isPhotoEditing && (
-          <div className="mt-6 flex gap-4 justify-center">
+        {!isEditing && !isTokenEditing && !isPhotoEditing && !isMultipleImageUploading && (
+          <div className="mt-6 flex gap-4 justify-center flex-wrap">
             <button
               onClick={handleTokenDisplay}
               className="px-6 py-2.5 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors"
@@ -559,6 +737,12 @@ const Dashboard = () => {
               className="px-6 py-2.5 bg-yellow-600 text-white rounded-md hover:bg-yellow-700 transition-colors"
             >
               Update with Photo
+            </button>
+            <button
+              onClick={handleMultipleImageUpload}
+              className="px-6 py-2.5 bg-pink-600 text-white rounded-md hover:bg-pink-700 transition-colors"
+            >
+              Upload Multiple Images
             </button>
             <button
               onClick={handleEdit}
@@ -844,6 +1028,195 @@ const Dashboard = () => {
                       setIsPhotoEditing(false);
                       setFile(null);
                       setError('');
+                    }}
+                    className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Multiple Images Upload Modal */}
+        {isMultipleImageUploading && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl max-w-2xl w-full p-6">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-xl font-semibold">Upload Multiple Images</h2>
+                <button
+                  onClick={() => {
+                    setIsMultipleImageUploading(false);
+                    setSelectedImages([]);
+                    setImageError('');
+                  }}
+                  className="text-gray-500 hover:text-gray-700"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium text-gray-500">Select Images</label>
+                  <input
+                    type="file"
+                    multiple
+                    accept="image/*"
+                    onChange={handleMultipleImagesChange}
+                    className="mt-1 w-full p-2 border rounded"
+                  />
+                  {selectedImages.length > 0 && (
+                    <div className="mt-2 text-sm text-gray-500">
+                      <p>Selected {selectedImages.length} images</p>
+                      <div className="grid grid-cols-3 gap-2 mt-2">
+                        {selectedImages.map((file, index) => (
+                          <div key={index} className="text-xs">
+                            <p>Name: {file.name}</p>
+                            <p>Size: {(file.size / 1024).toFixed(2)} KB</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {imageError && (
+                  <div className="text-red-500 text-sm">{imageError}</div>
+                )}
+
+                <div className="flex gap-4 justify-end mt-6">
+                  <button
+                    onClick={handleUploadMultipleImages}
+                    className="px-4 py-2 bg-pink-600 text-white rounded-md hover:bg-pink-700"
+                    disabled={selectedImages.length === 0}
+                  >
+                    Upload Images
+                  </button>
+                  <button
+                    onClick={() => {
+                      setIsMultipleImageUploading(false);
+                      setSelectedImages([]);
+                      setImageError('');
+                    }}
+                    className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Display uploaded images */}
+        {uploadedImages.length > 0 && (
+          <div className="mt-8">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold">Cart Items</h3>
+              <button
+                onClick={handleDeleteCart}
+                className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 text-sm"
+              >
+                Clear Cart
+              </button>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {uploadedImages.map((item, index) => (
+                <div key={item.id || index} className="bg-white rounded-lg overflow-hidden shadow-sm border border-gray-200">
+                  <div className="relative aspect-square">
+                    <div className="w-full h-full">
+                    <img
+                        src={item.url || 'https://via.placeholder.com/150?text=Image+Not+Found'}
+                        alt={item.name || `Item ${index + 1}`}
+                      className="w-full h-full object-cover"
+                      onError={(e) => {
+                          e.target.onerror = null; // Prevent infinite loop
+                        e.target.src = 'https://via.placeholder.com/150?text=Image+Not+Found';
+                      }}
+                    />
+                    <div className="absolute top-2 right-2 flex gap-2">
+                      <button
+                        onClick={() => handleCartItemEdit(item.id)}
+                        className="p-1 bg-white rounded-full shadow-sm hover:bg-gray-100"
+                        title="Edit"
+                      >
+                        <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={() => handleDeleteCartItem(item.id)}
+                        className="p-1 bg-white rounded-full shadow-sm hover:bg-gray-100"
+                        title="Delete"
+                      >
+                        <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="p-3">
+                    <p className="text-sm font-medium truncate">{item.name || `Item ${index + 1}`}</p>
+                    <div className="flex justify-between items-center mt-2">
+                      <span className="text-sm text-gray-500">Price: $100</span>
+                      <span className="text-sm text-gray-500">Qty: 1</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Edit Cart Item Modal */}
+        {isCartItemEditing && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl max-w-md w-full p-6">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-xl font-semibold">Edit Cart Item</h2>
+                <button
+                  onClick={() => {
+                    setIsCartItemEditing(false);
+                    setEditingItemId(null);
+                    setEditingItemFile(null);
+                  }}
+                  className="text-gray-500 hover:text-gray-700"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium text-gray-500">Select New Image</label>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleCartItemFileChange}
+                    className="mt-1 w-full p-2 border rounded"
+                  />
+                </div>
+
+                <div className="flex gap-4 justify-end mt-6">
+                  <button
+                    onClick={handleCartItemUpdate}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                    disabled={!editingItemFile}
+                  >
+                    Update Image
+                  </button>
+                  <button
+                    onClick={() => {
+                      setIsCartItemEditing(false);
+                      setEditingItemId(null);
+                      setEditingItemFile(null);
                     }}
                     className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700"
                   >
